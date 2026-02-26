@@ -53,7 +53,6 @@ const storeCmd = command(
     if (dryRun) console.log('[DRY RUN]')
     console.log('Storing', folder, 'with entry', entrypoint)
     console.log('Storage:', path.resolve(storagePath))
-    console.log('Root:', root)
 
     const bundle = await b.add(root, entrypoint, { skipModules, abi, dryRun })
 
@@ -72,7 +71,9 @@ const storeCmd = command(
       for (const f of files) console.log(' ', f)
     }
 
-    console.log('\nKey:', z32.encode(b.key))
+    const head = b.head()
+    console.log('\nKey:', z32.encode(head.key))
+    console.log('Length:', head.length)
 
     await b.close()
   }
@@ -154,7 +155,10 @@ const listCmd = command(
     }
 
     console.log('\n' + count, 'file(s)')
-    console.log('\nKey:', z32.encode(b.key))
+
+    const head = b.head()
+    console.log('\nKey:', z32.encode(head.key))
+    console.log('Length:', head.length)
 
     await b.close()
   }
