@@ -38,8 +38,8 @@ const storeCmd = command(
     return true
   }),
   async () => {
-    const folder = path.resolve(process.cwd())
-    const storagePath = path.join(folder, storeCmd.flags.storage || defaultStorage)
+    const folder = path.resolve(storeCmd.args.folder || process.cwd())
+    const storagePath = path.join(process.cwd(), storeCmd.flags.storage || defaultStorage)
     const entrypoint = storeCmd.args.entrypoint || 'index.js'
     const skipModules = storeCmd.flags.includeModules !== true
     const dryRun = storeCmd.flags.dryRun !== false
@@ -53,6 +53,7 @@ const storeCmd = command(
     if (dryRun) console.log('[DRY RUN]')
     console.log('Storing', folder, 'with entry', entrypoint)
     console.log('Storage:', path.resolve(storagePath))
+    console.log('Root:', root)
 
     const bundle = await b.add(root, entrypoint, { skipModules, abi, dryRun })
 

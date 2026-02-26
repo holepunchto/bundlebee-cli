@@ -54,7 +54,7 @@
     "bare-fs": "^4.5.5",
     "bare-path": "^3.0.0",
     "bare-process": "^4.2.2",
-    "bundlebee": "^1.0.2",
+    "bundlebee": "^1.0.3",
     "corestore": "^7.8.0",
     "hyperswarm": "^4.17.0",
     "paparam": "^1.10.0",
