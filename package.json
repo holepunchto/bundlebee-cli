@@ -1,8 +1,22 @@
 {
-  "name": "@holepunchto/repo-template",
+  "name": "bundlebee-cli",
   "version": "0.0.1",
-  "description": "repo-template",
-  "main": "index.js",
+  "description": "bundlebee-cli",
+  "bin": "index.js",
+  "imports": {
+    "fs": {
+      "bare": "bare-fs",
+      "default": "fs"
+    },
+    "path": {
+      "bare": "bare-path",
+      "default": "path"
+    },
+    "process": {
+      "bare": "bare-process",
+      "default": "process"
+    }
+  },
   "exports": {
     "./package": "./package.json",
     ".": {
@@ -28,12 +42,22 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/holepunchto/repo-template.git"
+    "url": "https://github.com/holepunchto/bundlebee-cli.git"
   },
   "author": "Holepunch Inc",
   "license": "Apache-2.0",
   "bugs": {
-    "url": "https://github.com/holepunchto/repo-template/issues"
+    "url": "https://github.com/holepunchto/bundlebee-cli/issues"
   },
-  "homepage": "https://github.com/holepunchto/repo-template"
+  "homepage": "https://github.com/holepunchto/bundlebee-cli",
+  "dependencies": {
+    "bare-fs": "^4.5.5",
+    "bare-path": "^3.0.0",
+    "bare-process": "^4.2.2",
+    "bundlebee": "^1.0.2",
+    "corestore": "^7.8.0",
+    "hyperswarm": "^4.17.0",
+    "paparam": "^1.10.0",
+    "z32": "^1.1.0"
+  }
 }

@@ -1,6 +1,4 @@
-# repo-template
-
-Template repository for creating packages
+# bundlebee-cli
 
 ## Usage
 
