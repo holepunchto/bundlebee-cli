@@ -11,6 +11,32 @@ const { spawnSync } = require('child_process')
 
 const defaultStorage = '.bundlebee'
 
+const esc = (code) => (s) => `\x1b[${code}m${s}\x1b[0m`
+
+const c = {
+  bold: esc('1'),
+  dim: esc('2'),
+  green: esc('32'),
+  yellow: esc('33'),
+  cyan: esc('36'),
+  red: esc('31'),
+  grey: esc('90'),
+  magenta: esc('35')
+}
+
+const label = {
+  key: (v) => c.cyan('Key: ') + c.bold(v),
+  length: (v) => c.cyan('Length: ') + v,
+  storage: (v) => c.dim('Storage: ') + v,
+  file: (f) => c.grey('  ' + f),
+  warn: (msg) => c.yellow('⚠ ' + msg),
+  err: (msg) => c.red('✖ ' + msg),
+  ok: (msg) => c.green('✔ ' + msg),
+  info: (msg) => c.cyan('▸ ' + msg)
+}
+
+// ── store ───────────────────────────────────────────────────────────────────
+
 const storeCmd = command(
   'store',
   summary('Store a folder into a bundlebee'),
@@ -51,30 +77,31 @@ const storeCmd = command(
 
     const root = new URL('file://' + folder + '/')
 
-    if (dryRun) console.log('[DRY RUN]')
-    console.log('Storing', folder, 'with entry', entrypoint)
-    console.log('Storage:', path.resolve(storagePath))
+    if (dryRun) console.log(c.yellow('[DRY RUN]'))
+    console.log(label.info('Storing ' + c.bold(folder) + ' with entry ' + c.bold(entrypoint)))
+    console.log(label.storage(path.resolve(storagePath)))
 
     const bundle = await b.add(root, entrypoint, { skipModules, abi, dryRun })
 
     if (dryRun) {
       const manifest = await b.manifest()
       if (manifest && abi <= manifest.abi) {
-        console.warn(`ABI must be greater than existing: ${abi} <= ${manifest.abi}`)
+        console.warn(label.warn(`ABI must be greater than existing: ${abi} <= ${manifest.abi}`))
       }
     }
 
     const files = Object.keys(bundle.files)
     if (files.length === 0) {
-      console.log('No changes detected.')
+      console.log(c.dim('No changes detected.'))
     } else {
-      console.log('Added', files.length, 'file(s):')
-      for (const f of files) console.log(' ', f)
+      console.log(label.ok('Added ' + c.bold(files.length) + ' file(s):'))
+      for (const f of files) console.log(label.file(f))
     }
 
     const head = b.head()
-    console.log('\nKey:', z32.encode(head.key))
-    console.log('Length:', head.length)
+    console.log()
+    console.log(label.key(z32.encode(head.key)))
+    console.log(label.length(head.length))
 
     await b.close()
   }
@@ -105,8 +132,8 @@ const checkoutCmd = command(
     const b = new Bundlebee(store, key ? { store: core.get({ key }) } : undefined)
     const checkout = await b.findABI(abi)
 
-    console.log('Checking out to', outPath)
-    if (abi) console.log('At abi:', abi)
+    console.log(label.info('Checking out to ' + c.bold(outPath)))
+    if (abi) console.log(label.info('ABI: ' + c.bold(abi)))
 
     let count = 0
     for await (const { id, source } of b.createEntryStream(checkout)) {
@@ -116,11 +143,11 @@ const checkoutCmd = command(
       fs.mkdirSync(dir, { recursive: true })
       fs.writeFileSync(filePath, source)
 
-      console.log(' ', id)
+      console.log(label.file(id))
       count++
     }
 
-    console.log('Wrote', count, 'file(s)')
+    console.log(label.ok('Wrote ' + c.bold(count) + ' file(s)'))
 
     await b.close()
   }
@@ -163,10 +190,10 @@ const diffCmd = command(
     fs.mkdirSync(outPath)
     spawnSync('git', ['init'], { cwd: outPath, stdio: ['pipe', 'pipe', 'inherit'] })
 
-    console.log('Checking out to', outPath)
+    console.log(label.info('Checking out to ' + c.bold(outPath)))
 
     for (const abi of abis) {
-      console.log('checking out', abi)
+      console.log(c.magenta('  ⏵ ABI ' + c.bold(abi)))
       const checkout = await b.findABI(abi)
 
       let count = 0
@@ -179,7 +206,7 @@ const diffCmd = command(
 
         count++
       }
-      console.log('Checked out', count, 'file(s) for ABI', abi)
+      console.log(label.ok('Checked out ' + c.bold(count) + ' file(s) for ABI ' + c.bold(abi)))
 
       spawnSync('git', ['add', '.'], { cwd: outPath, stdio: ['pipe', 'pipe', 'inherit'] })
       spawnSync('git', ['commit', '-m', abi.toString()], {
@@ -188,15 +215,20 @@ const diffCmd = command(
       })
     }
 
+    let done
+    const cleanedUp = new Promise((res) => (done = res))
     const keepalive = setInterval(() => {}, 1 << 30)
 
     process.on('SIGINT', async function () {
-      fs.rm(outPath, { recursive: true, force: true })
-      b.close()
       clearInterval(keepalive)
+      fs.rmdir(outPath, { recursive: true, force: true })
+      await b.close()
+      done()
+      process.exit()
     })
 
-    console.log('Waiting for <Ctrl-C> to remove diff')
+    console.log(c.dim('\nWaiting for <Ctrl-C> to remove diff...'))
+    await cleanedUp
   }
 )
 
@@ -225,15 +257,16 @@ const listCmd = command(
 
     let count = 0
     for await (const { id, source } of b.createEntryStream(checkout)) {
-      console.log(id, `(${source.length} bytes)`)
+      console.log(label.file(id) + c.grey(' (' + source.length + ' bytes)'))
       count++
     }
 
-    console.log('\n' + count, 'file(s)')
+    console.log('\n' + label.ok(c.bold(count) + ' file(s)'))
 
     const head = b.head()
-    console.log('\nKey:', z32.encode(head.key))
-    console.log('Length:', head.length)
+    console.log()
+    console.log(label.key(z32.encode(head.key)))
+    console.log(label.length(head.length))
 
     await b.close()
   }
