@@ -124,16 +124,24 @@ const checkoutCmd = command(
   async () => {
     const folder = path.resolve(process.cwd())
     const storagePath = path.join(folder, checkoutCmd.flags.storage || defaultStorage)
-    const abi = checkoutCmd.flags.abi ? Number(checkoutCmd.flags.abi) : undefined
     const key = checkoutCmd.flags.key ? z32.decode(checkoutCmd.flags.key) : null
     const outPath = checkoutCmd.flags.out ? path.join(folder, checkoutCmd.flags.out) : folder
 
     const store = new Corestore(storagePath)
     const b = new Bundlebee(store, key ? { store: core.get({ key }) } : undefined)
+    const abi = checkoutCmd.flags.abi
+      ? Number(checkoutCmd.flags.abi)
+      : await b.manifest().then((m) => m.abi)
+
     const checkout = await b.findABI(abi)
+    if (!checkout) {
+      console.log(label.err('ABI ' + abi + ' not found'))
+      return
+    }
+
+    console.log(label.info('ABI ' + c.bold(abi)))
 
     console.log(label.info('Checking out to ' + c.bold(outPath)))
-    if (abi) console.log(label.info('ABI: ' + c.bold(abi)))
 
     let count = 0
     for await (const { id, source } of b.createEntryStream(checkout)) {
@@ -207,6 +215,10 @@ const diffCmd = command(
     for (const abi of abis) {
       console.log(c.magenta('  ⏵ ABI ' + c.bold(abi)))
       const checkout = await b.findABI(abi)
+      if (!checkout) {
+        console.log(label.err('ABI ' + abi + ' not found'))
+        return
+      }
 
       let count = 0
       for await (const { id, source } of b.createEntryStream(checkout)) {
@@ -239,6 +251,39 @@ const diffCmd = command(
   }
 )
 
+const abiCmd = command(
+  'abis',
+  summary('List abis in a Bundlebee'),
+  description('List all ABIs stored in the Bundlebee.'),
+  flag('--storage|-s <path>', 'corestore storage path (default: ~/.bundlebee)'),
+  flag('--key|-k [key]', 'source Bundlebee key to list from'),
+  async () => {
+    const folder = path.resolve(process.cwd())
+    const storagePath = path.join(folder, listCmd.flags.storage || defaultStorage)
+    const key = listCmd.flags.key ? z32.decode(listCmd.flags.key) : null
+
+    const store = new Corestore(storagePath)
+    const b = new Bundlebee(store, key ? { store: core.get({ key }) } : undefined)
+
+    console.log(label.info('ABIs'))
+
+    let found = false
+    for await (const res of b.allABIs()) {
+      found = true
+      console.log(
+        c.magenta('  ⏵ ABI ' + c.bold(res.manifest.abi)),
+        c.dim('Length ' + res.checkout.length)
+      )
+    }
+
+    if (!found) {
+      console.log(label.err('No ABIs'))
+    }
+
+    await b.close()
+  }
+)
+
 const listCmd = command(
   'list',
   summary('List files in a Bundlebee'),
@@ -255,18 +300,22 @@ const listCmd = command(
   async () => {
     const folder = path.resolve(process.cwd())
     const storagePath = path.join(folder, listCmd.flags.storage || defaultStorage)
-    const abi = listCmd.flags.abi ? Number(listCmd.flags.abi) : undefined
     const key = listCmd.flags.key ? z32.decode(listCmd.flags.key) : null
 
     const store = new Corestore(storagePath)
     const b = new Bundlebee(store, key ? { store: core.get({ key }) } : undefined)
-    const checkout = await b.findABI(abi)
+    const abi = listCmd.flags.abi
+      ? Number(listCmd.flags.abi)
+      : await b.manifest().then((m) => m.abi)
 
-    if (abi) {
-      console.log(label.info('Listing ABI ' + c.bold(abi)))
-    } else {
-      console.log(label.info('Listing latest ABI'))
+    const checkout = await b.findABI(abi)
+    if (!checkout) {
+      console.log(label.err('ABI ' + abi + ' not found'))
+      return
     }
+
+    console.log(label.info('ABI ' + c.bold(abi)))
+
     console.log('')
 
     let count = 0
@@ -287,13 +336,14 @@ const listCmd = command(
 )
 
 const cmd = command(
-  'hyperbundle',
+  'bundlebee',
   summary('Bundle modules into a hyperbee'),
-  header('Hyperbundle - hyperbee module bundler'),
+  header('Bundlebee - hyperbee module bundler'),
   storeCmd,
   checkoutCmd,
   listCmd,
   diffCmd,
+  abiCmd,
   () => console.log(cmd.help())
 )
 
