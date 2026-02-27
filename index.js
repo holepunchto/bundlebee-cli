@@ -227,7 +227,6 @@ const diffCmd = command(
       })
     }
 
-    let done
     const keepalive = setInterval(() => {}, 1 << 30)
 
     process.on('SIGINT', async function () {
