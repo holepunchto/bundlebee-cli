@@ -1,12 +1,13 @@
 #!/usr/bin/env bare
 
-const { command, flag, arg, summary, description, header, validate } = require('paparam')
+const { command, flag, arg, summary, description, header, validate, rest } = require('paparam')
 const Bundlebee = require('bundlebee')
 const Corestore = require('corestore')
 const path = require('path')
 const process = require('process')
 const fs = require('fs')
 const z32 = require('z32')
+const { spawnSync } = require('child_process')
 
 const defaultStorage = '.bundlebee'
 
@@ -23,16 +24,16 @@ const storeCmd = command(
   validate(({ args, flags }) => {
     const folder = path.resolve(args.folder)
 
-    if (!fs.existsSync(folder)) return 'folder does not exist: ' + folder
-    if (!fs.statSync(folder).isDirectory()) return 'path is not a directory: ' + folder
+    if (!fs.existsSync(folder)) throw new Error('folder does not exist: ' + folder)
+    if (!fs.statSync(folder).isDirectory()) throw new Error('path is not a directory: ' + folder)
 
     const entrypoint = args.entrypoint || 'index.js'
     const entryPath = path.join(folder, entrypoint)
 
-    if (!fs.existsSync(entryPath)) return 'entrypoint does not exist: ' + entryPath
+    if (!fs.existsSync(entryPath)) throw new Error('entrypoint does not exist: ' + entryPath)
 
     if (flags.abi && (isNaN(Number(flags.abi)) || Number(flags.abi) <= 0)) {
-      return '--version must be a positive number'
+      throw new Error('--version must be a positive number')
     }
 
     return true
@@ -89,7 +90,7 @@ const checkoutCmd = command(
   flag('--out|-o [out]', 'checkout directory'),
   validate(({ flags }) => {
     if (flags.abi && (isNaN(Number(flags.abi)) || Number(flags.abi) <= 0)) {
-      return '--abi must be a positive number'
+      throw new Error('--abi must be a positive number')
     }
     return true
   }),
@@ -104,7 +105,7 @@ const checkoutCmd = command(
     const b = new Bundlebee(store, key ? { store: core.get({ key }) } : undefined)
     const checkout = await b.findABI(abi)
 
-    console.log('Checking out to', folder)
+    console.log('Checking out to', outPath)
     if (abi) console.log('At abi:', abi)
 
     let count = 0
@@ -125,6 +126,80 @@ const checkoutCmd = command(
   }
 )
 
+const diffCmd = command(
+  'diff',
+  summary('Checkout multiple Bundles to a new git repo to allow git diffing'),
+  description('Checkout historical Bundles to git'),
+  flag('--storage|-s <path>', 'corestore storage path (default: ~/.bundlebee)'),
+  flag('--key|-k [key]', 'source Bundlebee key to checkout from'),
+  flag('--out|-o [out]', 'checkout directory'),
+  flag('--all|-a', 'checkout all ABIs'),
+  rest('[...abis]'),
+  validate(({ rest, flags }) => {
+    if (!rest && !flags.all) {
+      throw new Error('one or more ABIs required')
+    }
+
+    for (const abi of rest) {
+      if (abi && (isNaN(Number(abi)) || Number(abi) <= 0)) {
+        throw new Error('ABI must be a positive number')
+      }
+    }
+
+    return true
+  }),
+  async () => {
+    const folder = path.resolve(process.cwd())
+    const storagePath = path.join(folder, diffCmd.flags.storage || defaultStorage)
+    const abis = diffCmd.rest.map(Number)
+    const key = diffCmd.flags.key ? z32.decode(diffCmd.flags.key) : null
+    const outPath = diffCmd.flags.out ? path.join(folder, diffCmd.flags.out) : folder
+
+    if (fs.existsSync(outPath)) throw new Error('Output folder already exists: ' + outPath)
+
+    const store = new Corestore(storagePath)
+    const b = new Bundlebee(store, key ? { store: core.get({ key }) } : undefined)
+
+    fs.mkdirSync(outPath)
+    spawnSync('git', ['init'], { cwd: outPath, stdio: ['pipe', 'pipe', 'inherit'] })
+
+    console.log('Checking out to', outPath)
+
+    for (const abi of abis) {
+      console.log('checking out', abi)
+      const checkout = await b.findABI(abi)
+
+      let count = 0
+      for await (const { id, source } of b.createEntryStream(checkout)) {
+        const filePath = path.join(outPath, id)
+        const dir = path.dirname(filePath)
+
+        fs.mkdirSync(dir, { recursive: true })
+        fs.writeFileSync(filePath, source)
+
+        count++
+      }
+      console.log('Checked out', count, 'file(s) for ABI', abi)
+
+      spawnSync('git', ['add', '.'], { cwd: outPath, stdio: ['pipe', 'pipe', 'inherit'] })
+      spawnSync('git', ['commit', '-m', abi.toString()], {
+        cwd: outPath,
+        stdio: ['pipe', 'pipe', 'inherit']
+      })
+    }
+
+    const keepalive = setInterval(() => {}, 1 << 30)
+
+    process.on('SIGINT', async function () {
+      fs.rm(outPath, { recursive: true, force: true })
+      b.close()
+      clearInterval(keepalive)
+    })
+
+    console.log('Waiting for <Ctrl-C> to remove diff')
+  }
+)
+
 const listCmd = command(
   'list',
   summary('List files in a Bundlebee'),
@@ -134,7 +209,7 @@ const listCmd = command(
   flag('--abi|-a [abi]', 'list a specific abi'),
   validate(({ flags }) => {
     if (flags.abi && (isNaN(Number(flags.abi)) || Number(flags.abi) <= 0)) {
-      return '--version must be a positive number'
+      throw new Error('--version must be a positive number')
     }
     return true
   }),
@@ -171,6 +246,7 @@ const cmd = command(
   storeCmd,
   checkoutCmd,
   listCmd,
+  diffCmd,
   () => console.log(cmd.help())
 )
 

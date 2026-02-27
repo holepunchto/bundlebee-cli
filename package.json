@@ -2,7 +2,9 @@
   "name": "bundlebee-cli",
   "version": "0.0.1",
   "description": "bundlebee-cli",
-  "bin": "index.js",
+  "bin": {
+    "bundlebee": "index.js"
+  },
   "imports": {
     "fs": {
       "bare": "bare-fs",
@@ -15,6 +17,10 @@
     "process": {
       "bare": "bare-process",
       "default": "process"
+    },
+    "child_process": {
+      "bare": "bare-subprocess",
+      "default": "child_process"
     }
   },
   "exports": {
