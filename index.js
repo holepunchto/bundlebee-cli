@@ -7,6 +7,9 @@ const path = require('path')
 const process = require('process')
 const fs = require('fs')
 const z32 = require('z32')
+const Hyperswarm = require('hyperswarm')
+const ID = require('hypercore-id-encoding')
+const BlindPeering = require('blind-peering')
 const { spawnSync } = require('child_process')
 
 const defaultStorage = '.bundlebee'
@@ -335,6 +338,56 @@ const listCmd = command(
   }
 )
 
+const seedCmd = command(
+  'seed',
+  summary('Seed your Bundlebee'),
+  description('Use Hyperswarm to share your Bundlebee with peers on your discovery key'),
+  flag('--add', 'request blind peers to seed new bundlebee'),
+  flag('--storage|-s <path>', 'corestore storage path (default: ~/.bundlebee)'),
+  async () => {
+    const folder = path.resolve(process.cwd())
+    const storagePath = path.join(folder, seedCmd.flags.storage || defaultStorage)
+    const key = seedCmd.flags.key ? z32.decode(seedCmd.flags.key) : null
+    const addCores = !!seedCmd.flags.add
+
+    const store = new Corestore(storagePath)
+    const b = new Bundlebee(store, key ? { store: core.get({ key }) } : undefined)
+    await b.ready()
+
+    let blindPeerKeys = []
+    try {
+      const packageJson = JSON.parse(fs.readFileSync(path.join(folder, 'package.json')))
+      blindPeerKeys = packageJson.blindPeers || []
+    } catch {}
+
+    const swarm = new Hyperswarm()
+    swarm.on('connection', (conn) => {
+      console.log(label.ok(ID.encode(conn.remotePublicKey), '<-- connected to'))
+      store.replicate(conn)
+    })
+    b.core.on('download', (index, byteLength, peer) => {
+      console.log(label.ok(ID.encode(peer.publicKey), index, byteLength))
+    })
+
+    console.log(label.info(`Connecting to ${blindPeerKeys.length} BlindPeers`))
+
+    let blind
+    if (addCores) {
+      blind = new BlindPeering(swarm, store, { mirrors: blindPeerKeys })
+      console.log(label.ok('Requesting Blind Peers to seed'))
+    }
+
+    for (const k of blindPeerKeys) {
+      if (addCores) await blind.addCore(b.core, undefined, { announce: true })
+      swarm.joinPeer(ID.decode(k))
+    }
+
+    swarm.join(b.discoveryKey, { client: true, server: true })
+
+    console.log(label.info('Seeding...'))
+  }
+)
+
 const cmd = command(
   'bundlebee',
   summary('Bundle modules into a hyperbee'),
@@ -344,6 +397,7 @@ const cmd = command(
   listCmd,
   diffCmd,
   abiCmd,
+  seedCmd,
   () => console.log(cmd.help())
 )
 
