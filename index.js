@@ -167,6 +167,8 @@ const diffCmd = command(
       throw new Error('one or more ABIs required')
     }
 
+    if (flags.all) return true
+
     for (const abi of rest) {
       if (abi && (isNaN(Number(abi)) || Number(abi) <= 0)) {
         throw new Error('ABI must be a positive number')
@@ -178,7 +180,7 @@ const diffCmd = command(
   async () => {
     const folder = path.resolve(process.cwd())
     const storagePath = path.join(folder, diffCmd.flags.storage || defaultStorage)
-    const abis = diffCmd.rest.map(Number)
+
     const key = diffCmd.flags.key ? z32.decode(diffCmd.flags.key) : null
     const outPath = diffCmd.flags.out ? path.join(folder, diffCmd.flags.out) : folder
 
@@ -186,6 +188,16 @@ const diffCmd = command(
 
     const store = new Corestore(storagePath)
     const b = new Bundlebee(store, key ? { store: core.get({ key }) } : undefined)
+
+    async function loadAll() {
+      const abis = []
+      for await (const res of b.allABIs()) {
+        abis.push(res.manifest.abi)
+      }
+      return abis.reverse()
+    }
+
+    const abis = diffCmd.flags.all ? await loadAll(b) : diffCmd.rest.map(Number)
 
     fs.mkdirSync(outPath)
     spawnSync('git', ['init'], { cwd: outPath, stdio: ['pipe', 'pipe', 'inherit'] })
@@ -216,19 +228,15 @@ const diffCmd = command(
     }
 
     let done
-    const cleanedUp = new Promise((res) => (done = res))
     const keepalive = setInterval(() => {}, 1 << 30)
 
     process.on('SIGINT', async function () {
-      clearInterval(keepalive)
-      fs.rmdir(outPath, { recursive: true, force: true })
+      fs.rm(outPath, { recursive: true, force: true })
       await b.close()
-      done()
-      process.exit()
+      clearInterval(keepalive)
     })
 
     console.log(c.dim('\nWaiting for <Ctrl-C> to remove diff...'))
-    await cleanedUp
   }
 )
 
@@ -254,6 +262,13 @@ const listCmd = command(
     const store = new Corestore(storagePath)
     const b = new Bundlebee(store, key ? { store: core.get({ key }) } : undefined)
     const checkout = await b.findABI(abi)
+
+    if (abi) {
+      console.log(label.info('Listing ABI ' + c.bold(abi)))
+    } else {
+      console.log(label.info('Listing latest ABI'))
+    }
+    console.log('')
 
     let count = 0
     for await (const { id, source } of b.createEntryStream(checkout)) {
