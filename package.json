@@ -5,6 +5,7 @@
   "bin": {
     "bundlebee": "index.js"
   },
+  "type": "commonjs",
   "imports": {
     "fs": {
       "bare": "bare-fs",
@@ -60,6 +61,7 @@
     "bare-fs": "^4.5.5",
     "bare-path": "^3.0.0",
     "bare-process": "^4.2.2",
+    "bare-subprocess": "^5.2.2",
     "blind-peering": "^1.15.0",
     "bundlebee": "^1.0.5",
     "corestore": "^7.8.0",
