@@ -262,8 +262,8 @@ const abiCmd = command(
   flag('--key|-k [key]', 'source Bundlebee key to list from'),
   async () => {
     const folder = path.resolve(process.cwd())
-    const storagePath = path.join(folder, listCmd.flags.storage || defaultStorage)
-    const key = listCmd.flags.key ? z32.decode(listCmd.flags.key) : null
+    const storagePath = path.join(folder, abiCmd.flags.storage || defaultStorage)
+    const key = abiCmd.flags.key ? z32.decode(abiCmd.flags.key) : null
 
     const store = new Corestore(storagePath)
     const b = new Bundlebee(store, key ? { store: core.get({ key }) } : undefined)
