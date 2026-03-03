@@ -131,7 +131,7 @@ const checkoutCmd = command(
     const outPath = checkoutCmd.flags.out ? path.join(folder, checkoutCmd.flags.out) : folder
 
     const store = new Corestore(storagePath)
-    const b = new Bundlebee(store, key ? { store: core.get({ key }) } : undefined)
+    const b = new Bundlebee(store, key ? { store: store.get({ key }) } : undefined)
     const abi = checkoutCmd.flags.abi
       ? Number(checkoutCmd.flags.abi)
       : await b.manifest().then((m) => m.abi)
@@ -198,7 +198,7 @@ const diffCmd = command(
     if (fs.existsSync(outPath)) throw new Error('Output folder already exists: ' + outPath)
 
     const store = new Corestore(storagePath)
-    const b = new Bundlebee(store, key ? { store: core.get({ key }) } : undefined)
+    const b = new Bundlebee(store, key ? { store: store.get({ key }) } : undefined)
 
     async function loadAll() {
       const abis = []
@@ -266,7 +266,7 @@ const abiCmd = command(
     const key = abiCmd.flags.key ? z32.decode(abiCmd.flags.key) : null
 
     const store = new Corestore(storagePath)
-    const b = new Bundlebee(store, key ? { store: core.get({ key }) } : undefined)
+    const b = new Bundlebee(store, key ? { store: store.get({ key }) } : undefined)
 
     console.log(label.info('ABIs'))
 
@@ -306,7 +306,7 @@ const listCmd = command(
     const key = listCmd.flags.key ? z32.decode(listCmd.flags.key) : null
 
     const store = new Corestore(storagePath)
-    const b = new Bundlebee(store, key ? { store: core.get({ key }) } : undefined)
+    const b = new Bundlebee(store, key ? { store: store.get({ key }) } : undefined)
     const abi = listCmd.flags.abi
       ? Number(listCmd.flags.abi)
       : await b.manifest().then((m) => m.abi)
@@ -351,7 +351,7 @@ const seedCmd = command(
     const addCores = !!seedCmd.flags.add
 
     const store = new Corestore(storagePath)
-    const b = new Bundlebee(store, key ? { store: core.get({ key }) } : undefined)
+    const b = new Bundlebee(store, key ? { store: store.get({ key }) } : undefined)
     await b.ready()
 
     let blindPeerKeys = []

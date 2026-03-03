@@ -21,12 +21,12 @@ bundlebee store ./my-project --include-modules
 bundlebee store ./my-project --dry-run
 ```
 
-| Flag | Description |
-|------|-------------|
+| Flag                   | Description                                    |
+| ---------------------- | ---------------------------------------------- |
 | `--storage, -s <path>` | Corestore storage path (default: `.bundlebee`) |
-| `--abi, -a <abi>` | Store under a specific ABI |
-| `--include-modules` | Include `node_modules` (default: false) |
-| `--dry-run` | Gather files without writing |
+| `--abi, -a <abi>`      | Store under a specific ABI                     |
+| `--include-modules`    | Include `node_modules` (default: false)        |
+| `--dry-run`            | Gather files without writing                   |
 
 ### Checkout
 
@@ -38,12 +38,12 @@ bundlebee checkout --abi 2 --out ./build
 bundlebee checkout --key <z32-key>
 ```
 
-| Flag | Description |
-|------|-------------|
-| `--storage, -s <path>` | Corestore storage path |
-| `--key, -k <key>` | Source Bundlebee key (z32-encoded) |
-| `--abi, -a <abi>` | Checkout a specific ABI |
-| `--out, -o <path>` | Output directory |
+| Flag                   | Description                        |
+| ---------------------- | ---------------------------------- |
+| `--storage, -s <path>` | Corestore storage path             |
+| `--key, -k <key>`      | Source Bundlebee key (z32-encoded) |
+| `--abi, -a <abi>`      | Checkout a specific ABI            |
+| `--out, -o <path>`     | Output directory                   |
 
 ### List
 
