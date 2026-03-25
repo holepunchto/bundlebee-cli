@@ -38,6 +38,10 @@ const label = {
   info: (msg) => c.cyan('▸ ' + msg)
 }
 
+function getUrl(head, entrypoint) {
+  return `bundle+pear://0.${head.length}.${z32.encode(head.key)}/${entrypoint}`
+}
+
 // ── store ───────────────────────────────────────────────────────────────────
 
 const storeCmd = command(
@@ -102,8 +106,10 @@ const storeCmd = command(
     }
 
     const head = b.head()
+    const url = getUrl(head, entrypoint)
+
     console.log()
-    console.log(label.key(z32.encode(head.key)))
+    console.log(label.key(url))
     console.log(label.length(head.length))
 
     await b.close()
@@ -330,8 +336,10 @@ const listCmd = command(
     console.log('\n' + label.ok(c.bold(count) + ' file(s)'))
 
     const head = b.head()
+    const url = getUrl(head, '<entrypoint>')
+
     console.log()
-    console.log(label.key(z32.encode(head.key)))
+    console.log(label.key(url))
     console.log(label.length(head.length))
 
     await b.close()
