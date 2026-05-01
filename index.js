@@ -8,6 +8,7 @@ const process = require('process')
 const fs = require('fs')
 const z32 = require('z32')
 const Hyperswarm = require('hyperswarm')
+const HyperDHT = require('hyperdht')
 const ID = require('hypercore-id-encoding')
 const BlindPeering = require('blind-peering')
 const { spawnSync } = require('child_process')
@@ -362,13 +363,19 @@ const seedCmd = command(
     const b = new Bundlebee(store, key ? { store: store.get({ key }) } : undefined)
     await b.ready()
 
+    const keyPair = await store.createKeyPair('gip')
+
     let blindPeerKeys = []
     try {
       const packageJson = JSON.parse(fs.readFileSync(path.join(folder, 'package.json')))
       blindPeerKeys = packageJson.blindPeers || []
     } catch {}
 
-    const swarm = new Hyperswarm()
+    const swarm = new Hyperswarm({
+      dht: new HyperDHT({
+        keyPair: keyPair
+      })
+    })
     swarm.on('connection', (conn) => {
       console.log(label.ok(ID.encode(conn.remotePublicKey), '<-- connected to'))
       store.replicate(conn)
@@ -377,6 +384,7 @@ const seedCmd = command(
       console.log(label.ok(ID.encode(peer.publicKey), index, byteLength))
     })
 
+    console.log(label.info(`Public Key: ${ID.encode(keyPair.publicKey)}`))
     console.log(label.info(`Connecting to ${blindPeerKeys.length} BlindPeers`))
 
     let blind
