@@ -6,11 +6,11 @@ const Corestore = require('corestore')
 const path = require('path')
 const process = require('process')
 const fs = require('fs')
-const z32 = require('z32')
 const Hyperswarm = require('hyperswarm')
 const HyperDHT = require('hyperdht')
 const ID = require('hypercore-id-encoding')
 const BlindPeering = require('blind-peering')
+const { pathToFileURL } = require('url-file-url')
 const { spawnSync } = require('child_process')
 
 const defaultStorage = '.bundlebee'
@@ -39,8 +39,86 @@ const label = {
   info: (msg) => c.cyan('▸ ' + msg)
 }
 
+const storageFlag = flag('--storage|-s <path>', 'corestore storage path (default: ./.bundlebee)')
+const keyFlag = flag('--key|-k [key]', 'read a remote Bundlebee by key, replicating from peers')
+const abiFlag = flag('--abi|-a [abi]', 'select a specific abi')
+const versionFlag = flag(
+  '--version|-v [range]',
+  'select the newest version matching a semver range'
+)
+
 function getUrl(head, entrypoint) {
-  return `bundle+pear://0.${head.length}.${z32.encode(head.key)}/${entrypoint}`
+  return `bundle+pear://0.${head.length}.${ID.encode(head.key)}/${entrypoint}`
+}
+
+function validateAbi({ flags }) {
+  if (flags.abi && (isNaN(Number(flags.abi)) || Number(flags.abi) <= 0)) {
+    throw new Error('--abi must be a positive number')
+  }
+  return true
+}
+
+async function open(flags) {
+  const store = new Corestore(path.resolve(flags.storage || defaultStorage))
+  const key = flags.key ? ID.decode(flags.key) : null
+  const b = new Bundlebee(store, key ? { key } : {})
+  await b.ready()
+
+  if (!key) return { b, close: () => b.close() }
+
+  const swarm = new Hyperswarm()
+  swarm.on('connection', (conn) => store.replicate(conn))
+
+  const done = b.core.findingPeers()
+  swarm.join(b.discoveryKey, { client: true, server: false })
+  swarm.flush().then(done, done)
+  await b.core.update()
+
+  return {
+    b,
+    async close() {
+      await swarm.destroy()
+      await b.close()
+    }
+  }
+}
+
+async function select(b, flags) {
+  if (flags.version) {
+    const checkout = await b.resolve(flags.version)
+    if (!checkout) throw new Error('No version matches ' + flags.version)
+    console.log(label.info('Version ' + c.bold(checkout.version)))
+    return checkout
+  }
+
+  const abi = flags.abi ? Number(flags.abi) : (await b.manifest())?.abi
+  if (!abi) throw new Error('Bundlebee is empty')
+
+  const checkout = await b.findABI(abi)
+  if (!checkout) throw new Error('ABI ' + abi + ' not found')
+
+  console.log(label.info('ABI ' + c.bold(abi)))
+  return checkout
+}
+
+async function writeEntries(b, checkout, outPath) {
+  let count = 0
+
+  for await (const { id, source } of b.createEntryStream(checkout)) {
+    const filePath = path.join(outPath, id)
+    if (!filePath.startsWith(outPath + path.sep)) throw new Error('Entry escapes output: ' + id)
+
+    fs.mkdirSync(path.dirname(filePath), { recursive: true })
+    fs.writeFileSync(filePath, source)
+
+    count++
+  }
+
+  return count
+}
+
+function git(cwd, ...args) {
+  spawnSync('git', args, { cwd, stdio: ['pipe', 'pipe', 'inherit'] })
 }
 
 // ── store ───────────────────────────────────────────────────────────────────
@@ -49,8 +127,9 @@ const storeCmd = command(
   'store',
   summary('Store a folder into a bundlebee'),
   description('Traverse and bundle a folder entry point into a hyperbee store.'),
-  flag('--storage|-s <path>', 'corestore storage path (default: ~/.bundlebee)'),
+  storageFlag,
   flag('--abi|-a [abi]', 'store under a specific abi'),
+  flag('--version|-v [version]', 'index the bundle under an exact semver version'),
   flag('--include-modules', 'include node_modules (default: false)'),
   flag('--dry-run', 'Gather files and check abi'),
   arg('<folder>', 'project folder to bundle'),
@@ -66,117 +145,97 @@ const storeCmd = command(
 
     if (!fs.existsSync(entryPath)) throw new Error('entrypoint does not exist: ' + entryPath)
 
-    if (flags.abi && (isNaN(Number(flags.abi)) || Number(flags.abi) <= 0)) {
-      throw new Error('--version must be a positive number')
-    }
-
-    return true
+    return validateAbi({ flags })
   }),
   async () => {
-    const folder = path.resolve(storeCmd.args.folder || process.cwd())
-    const storagePath = path.join(process.cwd(), storeCmd.flags.storage || defaultStorage)
-    const entrypoint = storeCmd.args.entrypoint || 'index.js'
-    const skipModules = storeCmd.flags.includeModules !== true
-    const dryRun = storeCmd.flags.dryRun !== false
-    const abi = storeCmd.flags.abi ? Number(storeCmd.flags.abi) : undefined
+    const { flags, args } = storeCmd
+    const folder = path.resolve(args.folder)
+    const entrypoint = args.entrypoint || 'index.js'
+    const skipModules = flags.includeModules !== true
+    const dryRun = flags.dryRun
+    const abi = flags.abi ? Number(flags.abi) : undefined
+    const version = flags.version || undefined
 
-    const store = new Corestore(storagePath)
-    const b = new Bundlebee(store)
+    const { b, close } = await open(flags)
 
-    const root = new URL('file://' + folder + '/')
+    try {
+      if (dryRun) console.log(c.yellow('[DRY RUN]'))
+      console.log(label.info('Storing ' + c.bold(folder) + ' with entry ' + c.bold(entrypoint)))
+      console.log(label.storage(path.resolve(flags.storage || defaultStorage)))
 
-    if (dryRun) console.log(c.yellow('[DRY RUN]'))
-    console.log(label.info('Storing ' + c.bold(folder) + ' with entry ' + c.bold(entrypoint)))
-    console.log(label.storage(path.resolve(storagePath)))
+      const root = pathToFileURL(folder + path.sep)
+      const bundle = await b.add(root, entrypoint, { skipModules, abi, version, dryRun })
 
-    const bundle = await b.add(root, entrypoint, { skipModules, abi, dryRun })
-
-    if (dryRun) {
-      const manifest = await b.manifest()
-      if (manifest && abi <= manifest.abi) {
-        console.warn(label.warn(`ABI must be greater than existing: ${abi} <= ${manifest.abi}`))
+      if (dryRun) {
+        const manifest = await b.manifest()
+        if (manifest && abi <= manifest.abi) {
+          console.warn(label.warn(`ABI must be greater than existing: ${abi} <= ${manifest.abi}`))
+        }
+        const existing = version ? await b.resolve(version) : null
+        if (existing && existing.version === version) {
+          console.warn(label.warn(`Version ${version} already exists`))
+        }
       }
+
+      const files = Object.keys(bundle.files)
+      if (files.length === 0) {
+        console.log(c.dim('No changes detected.'))
+      } else {
+        console.log(label.ok('Added ' + c.bold(files.length) + ' file(s):'))
+        for (const f of files) console.log(label.file(f))
+      }
+
+      const head = b.head()
+
+      console.log()
+      console.log(label.key(getUrl(head, entrypoint)))
+      console.log(label.length(head.length))
+    } finally {
+      await close()
     }
-
-    const files = Object.keys(bundle.files)
-    if (files.length === 0) {
-      console.log(c.dim('No changes detected.'))
-    } else {
-      console.log(label.ok('Added ' + c.bold(files.length) + ' file(s):'))
-      for (const f of files) console.log(label.file(f))
-    }
-
-    const head = b.head()
-    const url = getUrl(head, entrypoint)
-
-    console.log()
-    console.log(label.key(url))
-    console.log(label.length(head.length))
-
-    await b.close()
   }
 )
+
+// ── checkout ────────────────────────────────────────────────────────────────
 
 const checkoutCmd = command(
   'checkout',
   summary('Checkout files from a Bundlebee to a folder'),
   description('Checkout the bundle to disk'),
-  flag('--storage|-s <path>', 'corestore storage path (default: ~/.bundlebee)'),
-  flag('--key|-k [key]', 'source Bundlebee key to checkout from'),
-  flag('--abi|-a [abi]', 'checkout a specific abi'),
+  storageFlag,
+  keyFlag,
+  abiFlag,
+  versionFlag,
   flag('--out|-o [out]', 'checkout directory'),
-  validate(({ flags }) => {
-    if (flags.abi && (isNaN(Number(flags.abi)) || Number(flags.abi) <= 0)) {
-      throw new Error('--abi must be a positive number')
-    }
-    return true
-  }),
+  validate(validateAbi),
   async () => {
-    const folder = path.resolve(process.cwd())
-    const storagePath = path.join(folder, checkoutCmd.flags.storage || defaultStorage)
-    const key = checkoutCmd.flags.key ? z32.decode(checkoutCmd.flags.key) : null
-    const outPath = checkoutCmd.flags.out ? path.join(folder, checkoutCmd.flags.out) : folder
+    const { flags } = checkoutCmd
+    const outPath = path.resolve(flags.out || '.')
 
-    const store = new Corestore(storagePath)
-    const b = new Bundlebee(store, key ? { store: store.get({ key }) } : undefined)
-    const abi = checkoutCmd.flags.abi
-      ? Number(checkoutCmd.flags.abi)
-      : await b.manifest().then((m) => m.abi)
+    const { b, close } = await open(flags)
 
-    const checkout = await b.findABI(abi)
-    if (!checkout) {
-      console.log(label.err('ABI ' + abi + ' not found'))
-      return
+    try {
+      const checkout = await select(b, flags)
+
+      console.log(label.info('Checking out to ' + c.bold(outPath)))
+
+      const count = await writeEntries(b, checkout, outPath)
+
+      console.log(label.ok('Wrote ' + c.bold(count) + ' file(s)'))
+    } finally {
+      await close()
     }
-
-    console.log(label.info('ABI ' + c.bold(abi)))
-
-    console.log(label.info('Checking out to ' + c.bold(outPath)))
-
-    let count = 0
-    for await (const { id, source } of b.createEntryStream(checkout)) {
-      const filePath = path.join(outPath, id)
-      const dir = path.dirname(filePath)
-
-      fs.mkdirSync(dir, { recursive: true })
-      fs.writeFileSync(filePath, source)
-
-      console.log(label.file(id))
-      count++
-    }
-
-    console.log(label.ok('Wrote ' + c.bold(count) + ' file(s)'))
-
-    await b.close()
   }
 )
+
+// ── diff ────────────────────────────────────────────────────────────────────
 
 const diffCmd = command(
   'diff',
   summary('Checkout multiple Bundles to a new git repo to allow git diffing'),
   description('Checkout historical Bundles to git'),
-  flag('--storage|-s <path>', 'corestore storage path (default: ~/.bundlebee)'),
-  flag('--key|-k [key]', 'source Bundlebee key to checkout from'),
+  storageFlag,
+  keyFlag,
   flag('--out|-o [out]', 'checkout directory'),
   flag('--all|-a', 'checkout all ABIs'),
   rest('[...abis]'),
@@ -196,211 +255,176 @@ const diffCmd = command(
     return true
   }),
   async () => {
-    const folder = path.resolve(process.cwd())
-    const storagePath = path.join(folder, diffCmd.flags.storage || defaultStorage)
-
-    const key = diffCmd.flags.key ? z32.decode(diffCmd.flags.key) : null
-    const outPath = diffCmd.flags.out ? path.join(folder, diffCmd.flags.out) : folder
+    const { flags } = diffCmd
+    const outPath = path.resolve(flags.out || '.')
 
     if (fs.existsSync(outPath)) throw new Error('Output folder already exists: ' + outPath)
 
-    const store = new Corestore(storagePath)
-    const b = new Bundlebee(store, key ? { store: store.get({ key }) } : undefined)
+    const { b, close } = await open(flags)
 
-    async function loadAll() {
+    try {
       const abis = []
-      for await (const res of b.allABIs()) {
-        abis.push(res.manifest.abi)
+      if (flags.all) {
+        for await (const res of b.allABIs()) abis.unshift(res.manifest.abi)
+      } else {
+        abis.push(...diffCmd.rest.map(Number))
       }
-      return abis.reverse()
+
+      fs.mkdirSync(outPath)
+      git(outPath, 'init')
+
+      console.log(label.info('Checking out to ' + c.bold(outPath)))
+
+      for (const abi of abis) {
+        console.log(c.magenta('  ⏵ ABI ' + c.bold(abi)))
+
+        const checkout = await b.findABI(abi)
+        if (!checkout) throw new Error('ABI ' + abi + ' not found')
+
+        const count = await writeEntries(b, checkout, outPath)
+        console.log(label.ok('Checked out ' + c.bold(count) + ' file(s) for ABI ' + c.bold(abi)))
+
+        git(outPath, 'add', '.')
+        git(outPath, 'commit', '-m', abi.toString())
+      }
+    } finally {
+      await close()
     }
 
-    const abis = diffCmd.flags.all ? await loadAll(b) : diffCmd.rest.map(Number)
-
-    fs.mkdirSync(outPath)
-    spawnSync('git', ['init'], { cwd: outPath, stdio: ['pipe', 'pipe', 'inherit'] })
-
-    console.log(label.info('Checking out to ' + c.bold(outPath)))
-
-    for (const abi of abis) {
-      console.log(c.magenta('  ⏵ ABI ' + c.bold(abi)))
-      const checkout = await b.findABI(abi)
-      if (!checkout) {
-        console.log(label.err('ABI ' + abi + ' not found'))
-        return
-      }
-
-      let count = 0
-      for await (const { id, source } of b.createEntryStream(checkout)) {
-        const filePath = path.join(outPath, id)
-        const dir = path.dirname(filePath)
-
-        fs.mkdirSync(dir, { recursive: true })
-        fs.writeFileSync(filePath, source)
-
-        count++
-      }
-      console.log(label.ok('Checked out ' + c.bold(count) + ' file(s) for ABI ' + c.bold(abi)))
-
-      spawnSync('git', ['add', '.'], { cwd: outPath, stdio: ['pipe', 'pipe', 'inherit'] })
-      spawnSync('git', ['commit', '-m', abi.toString()], {
-        cwd: outPath,
-        stdio: ['pipe', 'pipe', 'inherit']
-      })
-    }
+    console.log(c.dim('\nWaiting for <Ctrl-C> to remove diff...'))
 
     const keepalive = setInterval(() => {}, 1 << 30)
 
-    process.on('SIGINT', async function () {
-      fs.rm(outPath, { recursive: true, force: true })
-      await b.close()
+    process.once('SIGINT', () => {
       clearInterval(keepalive)
+      fs.rmSync(outPath, { recursive: true, force: true })
     })
-
-    console.log(c.dim('\nWaiting for <Ctrl-C> to remove diff...'))
   }
 )
+
+// ── abis ────────────────────────────────────────────────────────────────────
 
 const abiCmd = command(
   'abis',
   summary('List abis in a Bundlebee'),
   description('List all ABIs stored in the Bundlebee.'),
-  flag('--storage|-s <path>', 'corestore storage path (default: ~/.bundlebee)'),
-  flag('--key|-k [key]', 'source Bundlebee key to list from'),
+  storageFlag,
+  keyFlag,
   async () => {
-    const folder = path.resolve(process.cwd())
-    const storagePath = path.join(folder, abiCmd.flags.storage || defaultStorage)
-    const key = abiCmd.flags.key ? z32.decode(abiCmd.flags.key) : null
+    const { b, close } = await open(abiCmd.flags)
 
-    const store = new Corestore(storagePath)
-    const b = new Bundlebee(store, key ? { store: store.get({ key }) } : undefined)
+    try {
+      console.log(label.info('ABIs'))
 
-    console.log(label.info('ABIs'))
+      let found = false
+      for await (const res of b.allABIs()) {
+        found = true
+        console.log(
+          c.magenta('  ⏵ ABI ' + c.bold(res.manifest.abi)),
+          c.dim('Length ' + res.checkout.length)
+        )
+      }
 
-    let found = false
-    for await (const res of b.allABIs()) {
-      found = true
-      console.log(
-        c.magenta('  ⏵ ABI ' + c.bold(res.manifest.abi)),
-        c.dim('Length ' + res.checkout.length)
-      )
+      if (!found) console.log(label.err('No ABIs'))
+    } finally {
+      await close()
     }
-
-    if (!found) {
-      console.log(label.err('No ABIs'))
-    }
-
-    await b.close()
   }
 )
+
+// ── list ────────────────────────────────────────────────────────────────────
 
 const listCmd = command(
   'list',
   summary('List files in a Bundlebee'),
   description('List all file entries stored in the Bundlebee.'),
-  flag('--storage|-s <path>', 'corestore storage path (default: ~/.bundlebee)'),
-  flag('--key|-k [key]', 'source Bundlebee key to list from'),
-  flag('--abi|-a [abi]', 'list a specific abi'),
-  validate(({ flags }) => {
-    if (flags.abi && (isNaN(Number(flags.abi)) || Number(flags.abi) <= 0)) {
-      throw new Error('--version must be a positive number')
-    }
-    return true
-  }),
+  storageFlag,
+  keyFlag,
+  abiFlag,
+  versionFlag,
+  validate(validateAbi),
   async () => {
-    const folder = path.resolve(process.cwd())
-    const storagePath = path.join(folder, listCmd.flags.storage || defaultStorage)
-    const key = listCmd.flags.key ? z32.decode(listCmd.flags.key) : null
+    const { flags } = listCmd
+    const { b, close } = await open(flags)
 
-    const store = new Corestore(storagePath)
-    const b = new Bundlebee(store, key ? { store: store.get({ key }) } : undefined)
-    const abi = listCmd.flags.abi
-      ? Number(listCmd.flags.abi)
-      : await b.manifest().then((m) => m.abi)
+    try {
+      const checkout = await select(b, flags)
 
-    const checkout = await b.findABI(abi)
-    if (!checkout) {
-      console.log(label.err('ABI ' + abi + ' not found'))
-      return
+      console.log('')
+
+      let count = 0
+      for await (const { id, source } of b.createEntryStream(checkout)) {
+        console.log(label.file(id) + c.grey(' (' + source.length + ' bytes)'))
+        count++
+      }
+
+      console.log('\n' + label.ok(c.bold(count) + ' file(s)'))
+
+      console.log()
+      console.log(label.key(getUrl(checkout, '<entrypoint>')))
+      console.log(label.length(checkout.length))
+    } finally {
+      await close()
     }
-
-    console.log(label.info('ABI ' + c.bold(abi)))
-
-    console.log('')
-
-    let count = 0
-    for await (const { id, source } of b.createEntryStream(checkout)) {
-      console.log(label.file(id) + c.grey(' (' + source.length + ' bytes)'))
-      count++
-    }
-
-    console.log('\n' + label.ok(c.bold(count) + ' file(s)'))
-
-    const head = b.head()
-    const url = getUrl(head, '<entrypoint>')
-
-    console.log()
-    console.log(label.key(url))
-    console.log(label.length(head.length))
-
-    await b.close()
   }
 )
+
+// ── seed ────────────────────────────────────────────────────────────────────
 
 const seedCmd = command(
   'seed',
   summary('Seed your Bundlebee'),
   description('Use Hyperswarm to share your Bundlebee with peers on your discovery key'),
   flag('--add', 'request blind peers to seed new bundlebee'),
-  flag('--storage|-s <path>', 'corestore storage path (default: ~/.bundlebee)'),
+  storageFlag,
   async () => {
-    const folder = path.resolve(process.cwd())
-    const storagePath = path.join(folder, seedCmd.flags.storage || defaultStorage)
-    const key = seedCmd.flags.key ? z32.decode(seedCmd.flags.key) : null
-    const addCores = !!seedCmd.flags.add
-
-    const store = new Corestore(storagePath)
-    const b = new Bundlebee(store, key ? { store: store.get({ key }) } : undefined)
+    const { flags } = seedCmd
+    const store = new Corestore(path.resolve(flags.storage || defaultStorage))
+    const b = new Bundlebee(store)
     await b.ready()
 
     const keyPair = await store.createKeyPair('gip')
 
     let blindPeerKeys = []
     try {
-      const packageJson = JSON.parse(fs.readFileSync(path.join(folder, 'package.json')))
+      const packageJson = JSON.parse(fs.readFileSync(path.resolve('package.json')))
       blindPeerKeys = packageJson.blindPeers || []
     } catch {}
 
-    const swarm = new Hyperswarm({
-      dht: new HyperDHT({
-        keyPair: keyPair
-      })
-    })
+    const swarm = new Hyperswarm({ dht: new HyperDHT({ keyPair }) })
+
     swarm.on('connection', (conn) => {
-      console.log(label.ok(ID.encode(conn.remotePublicKey), '<-- connected to'))
+      console.log(label.ok('Connected to ' + ID.encode(conn.remotePublicKey)))
       store.replicate(conn)
     })
-    b.core.on('download', (index, byteLength, peer) => {
-      console.log(label.ok(ID.encode(peer.publicKey), index, byteLength))
+
+    b.core.on('upload', (index, byteLength, peer) => {
+      console.log(
+        label.ok(`Sent block ${index} (${byteLength} bytes) to ${ID.encode(peer.remotePublicKey)}`)
+      )
     })
 
     console.log(label.info(`Public Key: ${ID.encode(keyPair.publicKey)}`))
     console.log(label.info(`Connecting to ${blindPeerKeys.length} BlindPeers`))
 
-    let blind
-    if (addCores) {
+    let blind = null
+    if (flags.add && blindPeerKeys.length > 0) {
       blind = new BlindPeering(swarm, store, { mirrors: blindPeerKeys })
-      console.log(label.ok('Requesting Blind Peers to seed'))
+      await blind.addCore(b.core, undefined, { announce: true })
+      console.log(label.ok('Requested Blind Peers to seed'))
     }
 
-    for (const k of blindPeerKeys) {
-      if (addCores) await blind.addCore(b.core, undefined, { announce: true })
-      swarm.joinPeer(ID.decode(k))
-    }
+    for (const k of blindPeerKeys) swarm.joinPeer(ID.decode(k))
 
     swarm.join(b.discoveryKey, { client: true, server: true })
 
-    console.log(label.info('Seeding...'))
+    console.log(label.info('Seeding ' + getUrl(b.head(), '<entrypoint>')))
+
+    process.once('SIGINT', async () => {
+      if (blind) await blind.close()
+      await swarm.destroy()
+      await b.close()
+    })
   }
 )
 
