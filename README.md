@@ -36,6 +36,8 @@ That `Key:` line is your import link — copy it and share it with consumers.
 
 Optionally: Use `--abi` to tag each release. The ABI must increment with each publish — think of it as your version number. Append `?abi=<n>` to the link so consumers resolve the correct checkout.
 
+Use `--version` to index the release under an exact semver version, so consumers can resolve it by range (`^1.2.0`). A version can only be stored once.
+
 If ABI is provided instead of length, it has the same end effect. Except it will need to get the latest Bundlebee data; and search it to find the correct checkout point based on the ABI.
 
 > **Pinning with length:** For safety, length is prefixed to the url so we can checkout the exact Bundle rather than latest:
@@ -101,6 +103,7 @@ Bundle a folder into a Bundlebee:
 ```
 bundlebee store ./my-project
 bundlebee store ./my-project main.js --abi 1
+bundlebee store ./my-project --version 1.2.0
 bundlebee store ./my-project --include-modules
 bundlebee store ./my-project --dry-run
 ```
@@ -109,6 +112,7 @@ bundlebee store ./my-project --dry-run
 | ---------------------- | ---------------------------------------------- |
 | `--storage, -s <path>` | Corestore storage path (default: `.bundlebee`) |
 | `--abi, -a <abi>`      | Store under a specific ABI                     |
+| `--version, -v <ver>`  | Index under an exact semver version            |
 | `--include-modules`    | Include `node_modules` (default: false)        |
 | `--dry-run`            | Gather files without writing                   |
 
@@ -119,15 +123,19 @@ Checkout files from a Bundlebee to disk:
 ```
 bundlebee checkout
 bundlebee checkout --abi 2 --out ./build
+bundlebee checkout --version '^1.2.0'
 bundlebee checkout --key <z32-key>
 ```
 
-| Flag                   | Description                        |
-| ---------------------- | ---------------------------------- |
-| `--storage, -s <path>` | Corestore storage path             |
-| `--key, -k <key>`      | Source Bundlebee key (z32-encoded) |
-| `--abi, -a <abi>`      | Checkout a specific ABI            |
-| `--out, -o <path>`     | Output directory                   |
+| Flag                    | Description                                         |
+| ----------------------- | --------------------------------------------------- |
+| `--storage, -s <path>`  | Corestore storage path                              |
+| `--key, -k <key>`       | Remote Bundlebee key, replicated from peers         |
+| `--abi, -a <abi>`       | Checkout a specific ABI                             |
+| `--version, -v <range>` | Checkout the newest version matching a semver range |
+| `--out, -o <path>`      | Output directory                                    |
+
+`list`, `abis` and `diff` accept `--key` too, and `list` accepts `--abi` and `--version`.
 
 ### List
 
@@ -136,6 +144,7 @@ List files stored in a Bundlebee:
 ```
 bundlebee list
 bundlebee list --abi 1
+bundlebee list --version '~1.2.0'
 ```
 
 ### ABIs
